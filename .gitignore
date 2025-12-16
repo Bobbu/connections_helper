@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# CDK
+cdk/cdk.out/
+*.js.map
+*.d.ts
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+node_modules

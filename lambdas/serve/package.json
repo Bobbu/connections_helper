@@ -1,0 +1,10 @@
+{
+  "name": "connections-helper-serve",
+  "version": "1.0.0",
+  "description": "Lambda to serve NYT Connections puzzle HTML",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0"
+  }
+}

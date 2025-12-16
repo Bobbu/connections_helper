@@ -1,0 +1,12 @@
+{
+  "name": "connections-helper-fetch",
+  "version": "1.0.0",
+  "description": "Lambda to fetch NYT Connections puzzle via API",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0",
+    "openai": "^4.73.0"
+  }
+}
