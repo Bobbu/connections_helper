@@ -1,8 +1,8 @@
 # Dependencies
-node_modules/
+**/node_modules/
 
 # CDK
-cdk/cdk.out/
+**/cdk.out/
 *.js.map
 *.d.ts
 
@@ -19,4 +19,3 @@ cdk/cdk.out/
 # Environment
 .env
 .env.local
-node_modules
