@@ -226,7 +226,7 @@ function generateHTML(puzzleDate, words, fetchedAt, todayDate) {
 
     <footer>
       <p>Data fetched at ${new Date(fetchedAt).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</p>
-      <p>Part of <a href="https://anystupididea.com">anystupididea.com</a></p>
+      <p>&copy; 2025&ndash;${new Date().getFullYear()} <a href="https://anystupididea.com">Any Stupid Idea</a> | <a href="https://anystupididea.com/terms.html">Terms</a> | <a href="https://anystupididea.com/privacy.html">Privacy</a></p>
     </footer>
   </div>
 </body>
