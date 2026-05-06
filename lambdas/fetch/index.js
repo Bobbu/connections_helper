@@ -138,6 +138,41 @@ exports.handler = async (event) => {
     const puzzle = await fetchPuzzle(puzzleDate);
     console.log(`Puzzle ID: ${puzzle.id}, Editor: ${puzzle.editor}`);
 
+    // Visual puzzles use image_url + image_alt_text instead of content. The alt
+    // text is the answer, so we don't extract definitions — we just record the
+    // puzzle exists so serve can render a "go play on NYT" page.
+    const isVisual = puzzle.categories.some((cat) =>
+      cat.cards.some((card) => card.content == null)
+    );
+
+    if (isVisual) {
+      console.log('Visual puzzle detected — storing minimal record');
+      const ttl = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLE_NAME,
+          Item: {
+            puzzle_date: puzzleDate,
+            puzzle_id: puzzle.id,
+            editor: puzzle.editor,
+            illustrator: puzzle.illustrator ?? null,
+            is_visual: true,
+            fetched_at: new Date().toISOString(),
+            ttl,
+          },
+        })
+      );
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          message: 'Visual puzzle stored',
+          puzzleDate,
+          puzzleId: puzzle.id,
+          isVisual: true,
+        }),
+      };
+    }
+
     // Extract words and categories
     const categories = puzzle.categories.map((cat) => ({
       title: cat.title,

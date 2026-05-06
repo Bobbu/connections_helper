@@ -233,6 +233,67 @@ function generateHTML(puzzleDate, words, fetchedAt, todayDate) {
 </html>`;
 }
 
+// Generate "visual puzzle" HTML — shown when today's puzzle is image-based,
+// since our dictionary/AI helpers don't apply.
+function generateVisualPuzzleHTML(puzzleDate, editor, illustrator) {
+  const formattedDate = new Date(puzzleDate + 'T12:00:00').toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const credit = illustrator
+    ? `<p class="credit">Edited by ${editor || 'NYT'} · Illustrated by ${illustrator}</p>`
+    : editor
+      ? `<p class="credit">Edited by ${editor}</p>`
+      : '';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connections Helper - Visual Puzzle Today</title>
+  <link rel="icon" type="image/x-icon" href="${ASSETS_URL}/favicon.ico">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+    .container { max-width: 560px; }
+    h1 { font-size: 2.5rem; margin-bottom: 16px; }
+    p { font-size: 1.15rem; opacity: 0.95; margin-bottom: 16px; line-height: 1.5; }
+    .credit { font-size: 0.95rem; opacity: 0.75; margin-top: 24px; }
+    a {
+      color: white;
+      text-decoration: none;
+      padding: 12px 24px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 25px;
+      display: inline-block;
+      margin-top: 8px;
+    }
+    a:hover { background: rgba(255,255,255,0.3); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Today's puzzle is visual</h1>
+    <p>The Connections puzzle for ${formattedDate} uses pictures instead of words, so dictionary definitions and cultural notes don't apply.</p>
+    <p>Solve it directly on the New York Times site.</p>
+    <a href="https://www.nytimes.com/games/connections">Play on NYT</a>
+    ${credit}
+  </div>
+</body>
+</html>`;
+}
+
 // Generate "not found" HTML
 function generateNotFoundHTML(puzzleDate) {
   return `<!DOCTYPE html>
@@ -275,7 +336,7 @@ function generateNotFoundHTML(puzzleDate) {
     <h1>?</h1>
     <p>Puzzle for ${puzzleDate} not found.</p>
     <p>It may not have been fetched yet, or it's outside our 7-day history.</p>
-    <a href="/">Go to Today's Puzzle</a>
+    <a href="https://www.nytimes.com/games/connections">Play on NYT</a>
   </div>
 </body>
 </html>`;
@@ -322,6 +383,19 @@ exports.handler = async (event) => {
         statusCode: 404,
         headers: { 'Content-Type': 'text/html' },
         body: generateNotFoundHTML(puzzleDate),
+      };
+    }
+
+    if (result.Item.is_visual) {
+      console.log(`Visual puzzle for ${puzzleDate} — rendering visual page`);
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'text/html' },
+        body: generateVisualPuzzleHTML(
+          puzzleDate,
+          result.Item.editor,
+          result.Item.illustrator
+        ),
       };
     }
 

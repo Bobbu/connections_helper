@@ -5,8 +5,8 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
-import * as events from 'aws-cdk-lib/aws-events';
-import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -120,18 +120,24 @@ export class ConnectionsHelperStack extends cdk.Stack {
 
     puzzleTable.grantReadData(serveLambda);
 
-    // EventBridge Rule - Run at 12:05 AM Eastern Time (5:05 AM UTC)
-    // Note: ET is UTC-5 (EST) or UTC-4 (EDT). Using 5:05 AM UTC covers EST.
-    // For EDT, you might want 4:05 AM UTC. Consider using a single time that works year-round.
-    const fetchSchedule = new events.Rule(this, 'FetchSchedule', {
-      ruleName: 'connections-helper-daily-fetch',
-      schedule: events.Schedule.cron({
-        minute: '5',
-        hour: '5', // 5:05 AM UTC = 12:05 AM EST
-      }),
+    // EventBridge Scheduler — runs at 12:05 AM America/New_York year-round.
+    // Using the Scheduler service (not the older Rules API) so the schedule
+    // expression can carry a timezone and stays put across DST transitions.
+    const schedulerRole = new iam.Role(this, 'SchedulerRole', {
+      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
     });
+    fetchLambda.grantInvoke(schedulerRole);
 
-    fetchSchedule.addTarget(new eventsTargets.LambdaFunction(fetchLambda));
+    new scheduler.CfnSchedule(this, 'FetchSchedule', {
+      name: 'connections-helper-daily-fetch',
+      flexibleTimeWindow: { mode: 'OFF' },
+      scheduleExpression: 'cron(5 0 * * ? *)',
+      scheduleExpressionTimezone: 'America/New_York',
+      target: {
+        arn: fetchLambda.functionArn,
+        roleArn: schedulerRole.roleArn,
+      },
+    });
 
     // API Gateway for serving HTML (static assets now on S3/CloudFront)
     const api = new apigateway.RestApi(this, 'Api', {
