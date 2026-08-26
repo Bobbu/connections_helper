@@ -1,8 +1,20 @@
+const fs = require('fs');
+const path = require('path');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const OpenAI = require('openai');
 const culturalRefs = require('./cultural-refs');
+
+// Prompts are loaded once per cold start and reused across warm invocations.
+const SYSTEM_PROMPT = fs.readFileSync(
+  path.join(__dirname, 'prompts/cultural-refs-system.txt'),
+  'utf8'
+).trim();
+const USER_PROMPT_TEMPLATE = fs.readFileSync(
+  path.join(__dirname, 'prompts/cultural-refs-user.txt'),
+  'utf8'
+).trim();
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
@@ -41,21 +53,16 @@ async function getAICulturalReferences(words) {
 
     const openai = new OpenAI({ apiKey });
     const wordList = words.join(', ');
+    const userPrompt = USER_PROMPT_TEMPLATE.replace('{{wordList}}', wordList);
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'system',
-          content: `You are a helpful assistant for NYT Connections puzzle players. For each word, provide brief cultural context that might help solve the puzzle - things like wordplay, slang meanings, celebrity references, brand names, movie/TV references, homophones, or alternate meanings that a dictionary wouldn't cover. Keep each entry under 100 characters. Return ONLY a valid JSON object mapping each word to its cultural note, or null if the word is purely dictionary-based with no notable cultural context.`,
-        },
-        {
-          role: 'user',
-          content: `Provide cultural context for these NYT Connections puzzle words: ${wordList}`,
-        },
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 1000,
+      max_tokens: 1500,
       temperature: 0.7,
     });
 
@@ -94,11 +101,17 @@ async function fetchPuzzle(puzzleDate) {
   return response.json();
 }
 
+// dictionaryapi.dev sits behind Cloudflare; on a cache miss with a sick origin it
+// stalls ~20s before returning a 522 rather than failing fast. Definitions are a
+// nice-to-have, so we cap each request well short of that and move on.
+const DEFINITION_TIMEOUT_MS = 5000;
+
 // Fetch definition from free dictionary API
 async function getDefinition(word) {
   try {
     const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${word.toLowerCase()}`
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`,
+      { signal: AbortSignal.timeout(DEFINITION_TIMEOUT_MS) }
     );
     if (!response.ok) return null;
     const data = await response.json();
@@ -121,7 +134,11 @@ async function getDefinition(word) {
     }
     return definitions.length > 0 ? definitions : null;
   } catch (error) {
-    console.error(`Error fetching definition for ${word}:`, error);
+    if (error.name === 'TimeoutError') {
+      console.warn(`Definition lookup timed out for ${word}`);
+    } else {
+      console.error(`Error fetching definition for ${word}:`, error);
+    }
     return null;
   }
 }
@@ -190,21 +207,23 @@ exports.handler = async (event) => {
     console.log('Fetching AI cultural references...');
     const aiCulturalRefs = await getAICulturalReferences(wordList);
 
-    // Fetch definitions for each word
+    // Fetch definitions concurrently. Definitions are optional enrichment — a slow
+    // or down dictionary must never cost us the puzzle itself, so every lookup is
+    // individually capped and failures degrade to an empty list.
     console.log('Fetching definitions...');
-    const words = [];
-    for (const card of allCards) {
-      const word = card.content;
-      const definitions = await getDefinition(word);
-      // AI refs take priority, fall back to hardcoded refs
-      const culturalRef = aiCulturalRefs[word] || culturalRefs[word] || null;
+    const definitionResults = await Promise.all(
+      allCards.map((card) => getDefinition(card.content))
+    );
 
-      words.push({
-        word,
-        definitions: definitions || [],
-        culturalRef,
-      });
-    }
+    const words = allCards.map((card, i) => ({
+      word: card.content,
+      definitions: definitionResults[i] || [],
+      // AI refs take priority, fall back to hardcoded refs
+      culturalRef: aiCulturalRefs[card.content] || culturalRefs[card.content] || null,
+    }));
+
+    const withDefs = words.filter((w) => w.definitions.length > 0).length;
+    console.log(`Definitions resolved for ${withDefs}/${words.length} words`);
 
     // Calculate TTL (7 days from now)
     const ttl = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;

@@ -92,7 +92,7 @@ export class ConnectionsHelperStack extends cdk.Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambdas/fetch')),
       memorySize: 256,
-      timeout: cdk.Duration.seconds(60), // Increased for OpenAI API call
+      timeout: cdk.Duration.seconds(120), // Headroom for OpenAI + dictionary lookups
       environment: {
         TABLE_NAME: puzzleTable.tableName,
         OPENAI_SECRET_NAME: 'connections-helper/openai-api-key',

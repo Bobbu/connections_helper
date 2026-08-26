@@ -1,0 +1,3 @@
+Today's NYT Connections words: {{wordList}}
+
+Provide hint angles for each word.
