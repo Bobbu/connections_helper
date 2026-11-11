@@ -66,7 +66,7 @@ connections_helper/
 
 ## Extending Cultural References
 
-Add entries to `lambdas/fetch/cultural-refs.js` for words the dictionary API doesn't cover:
+Definitions come from Wiktionary's REST API, falling back to dictionaryapi.dev (each lookup capped at 5s; a miss just leaves that word undefined). Add entries to `lambdas/fetch/cultural-refs.js` for words neither source covers:
 
 ```javascript
 module.exports = {
