@@ -101,46 +101,112 @@ async function fetchPuzzle(puzzleDate) {
   return response.json();
 }
 
-// dictionaryapi.dev sits behind Cloudflare; on a cache miss with a sick origin it
-// stalls ~20s before returning a 522 rather than failing fast. Definitions are a
-// nice-to-have, so we cap each request well short of that and move on.
+// Definitions are nice-to-have enrichment, so every lookup is capped well short of
+// the Lambda's patience and a failure degrades to no definition for that one word.
 const DEFINITION_TIMEOUT_MS = 5000;
+const MAX_DEFINITIONS = 3;
+const MAX_DEFINITION_LENGTH = 100;
 
-// Fetch definition from free dictionary API
-async function getDefinition(word) {
-  try {
-    const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`,
-      { signal: AbortSignal.timeout(DEFINITION_TIMEOUT_MS) }
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
+// Wikimedia asks that API clients identify themselves.
+const USER_AGENT = 'connections-helper/1.0 (https://connections-helper.anystupididea.com)';
 
-    const definitions = [];
-    for (const entry of data) {
-      for (const meaning of entry.meanings || []) {
-        for (const def of meaning.definitions || []) {
-          if (definitions.length < 3 && def.definition) {
-            const short = def.definition.length > 100
-              ? def.definition.substring(0, 97) + '...'
-              : def.definition;
-            definitions.push({
-              partOfSpeech: meaning.partOfSpeech,
-              definition: short,
-            });
-          }
-        }
+async function fetchJSON(url) {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(DEFINITION_TIMEOUT_MS),
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
+const ENTITIES = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&nbsp;': ' ',
+};
+
+// Wiktionary returns each sense as an HTML fragment — wikilinks, usage labels,
+// formatting. We render plain text, so flatten it.
+function stripHTML(html) {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;|&lt;|&gt;|&quot;|&#39;|&nbsp;/g, (entity) => ENTITIES[entity])
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncate(text) {
+  return text.length > MAX_DEFINITION_LENGTH
+    ? text.substring(0, MAX_DEFINITION_LENGTH - 3) + '...'
+    : text;
+}
+
+// Primary source: fast, no API key, and it covers the slang and coinages
+// Connections leans on (BOUGIE, RATCHET, FOAMILY) that a plain dictionary misses.
+async function getWiktionaryDefinitions(word) {
+  const data = await fetchJSON(
+    `https://en.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(word.toLowerCase())}`
+  );
+  // Sibling keys are the same page's other-language sections; we only want English.
+  const entries = data?.en;
+  if (!Array.isArray(entries)) return null;
+
+  const definitions = [];
+  for (const entry of entries) {
+    for (const def of entry.definitions || []) {
+      // A sense that is nothing but a usage label strips down to an empty string.
+      const text = stripHTML(def.definition || '');
+      if (!text) continue;
+      definitions.push({
+        partOfSpeech: (entry.partOfSpeech || '').toLowerCase(),
+        definition: truncate(text),
+      });
+      if (definitions.length === MAX_DEFINITIONS) return definitions;
+    }
+  }
+  return definitions.length > 0 ? definitions : null;
+}
+
+// Fallback: dictionaryapi.dev sits behind Cloudflare and has long stretches where
+// every request stalls ~20s into a 522, which is why it is no longer first.
+async function getDictionaryApiDefinitions(word) {
+  const data = await fetchJSON(
+    `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`
+  );
+  if (!Array.isArray(data)) return null;
+
+  const definitions = [];
+  for (const entry of data) {
+    for (const meaning of entry.meanings || []) {
+      for (const def of meaning.definitions || []) {
+        if (!def.definition) continue;
+        definitions.push({
+          partOfSpeech: meaning.partOfSpeech,
+          definition: truncate(def.definition),
+        });
+        if (definitions.length === MAX_DEFINITIONS) return definitions;
       }
     }
-    return definitions.length > 0 ? definitions : null;
-  } catch (error) {
-    if (error.name === 'TimeoutError') {
-      console.warn(`Definition lookup timed out for ${word}`);
-    } else {
-      console.error(`Error fetching definition for ${word}:`, error);
-    }
-    return null;
   }
+  return definitions.length > 0 ? definitions : null;
+}
+
+// Try each source in turn; a word with no entry anywhere (proper nouns, mostly)
+// still gets its cultural reference.
+async function getDefinition(word) {
+  for (const lookup of [getWiktionaryDefinitions, getDictionaryApiDefinitions]) {
+    try {
+      const definitions = await lookup(word);
+      if (definitions) return definitions;
+    } catch (error) {
+      const reason = error.name === 'TimeoutError' ? 'timed out' : error.message;
+      console.warn(`${lookup.name} failed for ${word}: ${reason}`);
+    }
+  }
+  return null;
 }
 
 // Main handler
